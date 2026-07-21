@@ -1,0 +1,12 @@
+fastapi>=0.110,<1
+uvicorn[standard]>=0.29,<1
+python-multipart>=0.0.9,<1
+opencv-python-headless>=4.9,<5
+numpy>=1.26,<3
+Pillow>=10,<13
+pillow-heif>=0.15,<2
+scipy>=1.12,<2
+torch>=2.2,<3
+torchvision>=0.17,<1
+ultralytics>=8.2,<9
+faiss-cpu>=1.8,<2; platform_machine != "arm64"

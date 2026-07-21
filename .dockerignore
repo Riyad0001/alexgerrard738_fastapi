@@ -1,0 +1,10 @@
+.git
+.agents
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+storage
+*.log
+.env
+tests
