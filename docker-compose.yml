@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  api:
+    build: .
+    container_name: key_matching_agent
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - ./storage:/app/storage
+    labels:
+      - "traefik.enable=true"
+      # Replace `api.yourdomain.com` with your actual domain name for this service
+      - "traefik.http.routers.key_matching.rule=Host(`api.yourdomain.com`)" 
+      # Usually 'websecure' is used for HTTPS entrypoints in Traefik. Adjust if yours is named differently (e.g., 'https').
+      - "traefik.http.routers.key_matching.entrypoints=websecure"
+      # Replace 'myresolver' with your Traefik Let's Encrypt resolver name, if you have one.
+      - "traefik.http.routers.key_matching.tls.certresolver=myresolver" 
+      - "traefik.http.services.key_matching.loadbalancer.server.port=8000"
+    networks:
+      - traefik_network
+
+networks:
+  traefik_network:
+    external: true
+    # If your existing Traefik network has a different name, uncomment and specify it here.
+    # name: actual_network_name
