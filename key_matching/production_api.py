@@ -73,10 +73,10 @@ async def lifespan(app: FastAPI):
     pipeline.load_models()
     app.state.pipeline = pipeline
     app.state.store = FeatureStore(
-        settings.database_path, timeout=settings.sqlite_timeout_seconds
+        settings.database_url, timeout=settings.sqlite_timeout_seconds
     )
     app.state.ready = True
-    LOGGER.info("service_ready database=%s", settings.database_path)
+    LOGGER.info("service_ready database=%s", settings.database_url)
     try:
         yield
     finally:
@@ -562,13 +562,13 @@ def _build_key_info_with_paths(record: dict, request: Request) -> KeyInfo:
 
     front_path, back_path = None, None
     with store._lock:
-        row = store.connection.execute(
+        row = store._execute(
             "SELECT front_image, back_image FROM key_features WHERE key_id=? AND side='front'",
             (key_id,)
         ).fetchone()
         if row:
             front_path = row["front_image"]
-        row = store.connection.execute(
+        row = store._execute(
             "SELECT front_image, back_image FROM key_features WHERE key_id=? AND side='back'",
             (key_id,)
         ).fetchone()
