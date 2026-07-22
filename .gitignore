@@ -5,6 +5,7 @@ __pycache__/
 *.log
 .env
 storage/images/
+temp_auto_push.bat
 storage/artifacts/
 storage/features.sqlite3*
 venv
@@ -12,4 +13,5 @@ venv/
 .venv/
 __pycache__/
 *.pyc
-.env
+.env.gitignore
+branch_structure.json
