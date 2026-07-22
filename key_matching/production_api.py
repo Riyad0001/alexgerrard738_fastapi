@@ -61,10 +61,6 @@ PROTECTED = [Depends(require_api_key)]
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Ensure application logs show in stdout
-    logging.basicConfig(level=logging.INFO)
-    LOGGER.setLevel(logging.INFO)
-
     settings.validate()
     for directory in (settings.storage_dir, settings.images_dir, settings.artifacts_dir):
         directory.mkdir(parents=True, exist_ok=True)
@@ -76,19 +72,12 @@ async def lifespan(app: FastAPI):
     )
     pipeline.load_models()
     app.state.pipeline = pipeline
-
-    # Mask password in logged URL for security
-    import re
-    safe_url = re.sub(r"(postgresql?://[^:]+:)[^@]+(@)", r"\1****\2", settings.database_url)
-    LOGGER.info("db_connecting url=%s", safe_url)
-
     app.state.store = FeatureStore(
         settings.database_url,
-        timeout=settings.db_timeout_seconds
+        timeout=settings.sqlite_timeout_seconds
     )
     app.state.ready = True
-    LOGGER.info("db_connected  url=%s", safe_url)
-    LOGGER.info("service_ready")
+    LOGGER.info("service_ready database=%s", settings.database_url)
     try:
         yield
     finally:

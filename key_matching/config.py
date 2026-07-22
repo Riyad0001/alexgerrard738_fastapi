@@ -38,14 +38,13 @@ class Settings:
     bitting_shortlist: int = int(os.getenv("BITTING_SHORTLIST", "10"))
     max_upload_bytes: int = int(os.getenv("MAX_UPLOAD_BYTES", str(20 * 1024 * 1024)))
     max_image_pixels: int = int(os.getenv("MAX_IMAGE_PIXELS", "40000000"))
-    db_timeout_seconds: float = float(os.getenv("DB_TIMEOUT_SECONDS") or os.getenv("SQLITE_TIMEOUT_SECONDS") or "30")
+    sqlite_timeout_seconds: float = float(os.getenv("SQLITE_TIMEOUT_SECONDS", "30"))
     allow_segmentation_fallback: bool = _bool("ALLOW_SEGMENTATION_FALLBACK", False)
     api_key: str | None = os.getenv("API_KEY") or None
     allowed_origins: tuple[str, ...] = _csv("ALLOWED_ORIGINS", "")
     allowed_hosts: tuple[str, ...] = _csv("ALLOWED_HOSTS", "localhost,127.0.0.1")
     enable_docs: bool = _bool("ENABLE_DOCS", True)
     database_url: str = os.getenv("DATABASE_URL", "").strip()
-
 
     def validate(self) -> None:
         if self.app_env not in {"development", "test", "production"}:
@@ -60,8 +59,8 @@ class Settings:
             raise ValueError("MAX_UPLOAD_BYTES must be at least 1024")
         if self.max_image_pixels < 1:
             raise ValueError("MAX_IMAGE_PIXELS must be positive")
-        if self.db_timeout_seconds <= 0:
-            raise ValueError("DB_TIMEOUT_SECONDS must be positive")
+        if self.sqlite_timeout_seconds <= 0:
+            raise ValueError("SQLITE_TIMEOUT_SECONDS must be positive")
         if not self.detector_model.is_file():
             raise ValueError(f"Detector model not found: {self.detector_model}")
         if not self.embedding_model.is_file():
@@ -84,4 +83,3 @@ class Settings:
 
 
 settings = Settings()
-
