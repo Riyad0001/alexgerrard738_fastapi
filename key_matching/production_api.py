@@ -73,10 +73,11 @@ async def lifespan(app: FastAPI):
     pipeline.load_models()
     app.state.pipeline = pipeline
     app.state.store = FeatureStore(
-        settings.database_path, timeout=settings.sqlite_timeout_seconds
+        settings.database_url,
+        timeout=settings.sqlite_timeout_seconds
     )
     app.state.ready = True
-    LOGGER.info("service_ready database=%s", settings.database_path)
+    LOGGER.info("service_ready database=%s", settings.database_url)
     try:
         yield
     finally:
