@@ -72,21 +72,11 @@ async def lifespan(app: FastAPI):
     )
     pipeline.load_models()
     app.state.pipeline = pipeline
-
-    import re
-    masked_url = settings.database_url
-    if "@" in masked_url:
-        masked_url = re.sub(r":([^:@]+)@", r":****@", masked_url)
-
-    uvicorn_logger = logging.getLogger("uvicorn.error")
-    uvicorn_logger.info("db_connecting url=%s", masked_url)
     app.state.store = FeatureStore(
-        settings.database_url,
-        timeout=settings.sqlite_timeout_seconds
+        settings.database_path, timeout=settings.sqlite_timeout_seconds
     )
-    uvicorn_logger.info("db_connected  url=%s", masked_url)
     app.state.ready = True
-    uvicorn_logger.info("service_ready")
+    LOGGER.info("service_ready database=%s", settings.database_path)
     try:
         yield
     finally:

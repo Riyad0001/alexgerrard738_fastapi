@@ -62,7 +62,9 @@ class FeatureStore:
 
     def __init__(self, dsn: str | Path, timeout: float = 30) -> None:
         self._lock = RLock()
-        self.connection = psycopg2.connect(str(dsn), connect_timeout=int(timeout))
+        self._dsn = str(dsn)
+        self._timeout = int(timeout)
+        self.connection = psycopg2.connect(self._dsn, connect_timeout=self._timeout)
         self._migrate()
         self._index = None
         self._index_ids: list[tuple[str, str]] = []
@@ -77,8 +79,15 @@ class FeatureStore:
             if "ON CONFLICT" not in sql:
                 sql += " ON CONFLICT (key_id) DO NOTHING"
         
-        cursor = self.connection.cursor(cursor_factory=RealDictCursor)
-        cursor.execute(sql, params)
+        try:
+            cursor = self.connection.cursor(cursor_factory=RealDictCursor)
+            cursor.execute(sql, params)
+        except psycopg2.OperationalError:
+            # Connection dropped, try to reconnect once
+            self.connection = psycopg2.connect(self._dsn, connect_timeout=self._timeout)
+            cursor = self.connection.cursor(cursor_factory=RealDictCursor)
+            cursor.execute(sql, params)
+            
         return PgCursorWrapper(cursor)
 
     def _migrate(self) -> None:
