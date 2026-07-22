@@ -46,7 +46,6 @@ class Settings:
     enable_docs: bool = _bool("ENABLE_DOCS", True)
     database_url: str = os.getenv("DATABASE_URL", "").strip()
 
-
     def validate(self) -> None:
         if self.app_env not in {"development", "test", "production"}:
             raise ValueError("APP_ENV must be development, test, or production")
@@ -84,4 +83,3 @@ class Settings:
 
 
 settings = Settings()
-
