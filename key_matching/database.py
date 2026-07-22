@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
-import sqlite3
+import datetime
 from pathlib import Path
 from threading import RLock
 from typing import Any
 
 import numpy as np
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 from .types import KeyFeatures
 
@@ -15,39 +17,86 @@ class DuplicateKeyError(ValueError):
     pass
 
 
-class FeatureStore:
-    """Transactional SQLite persistence safe for FastAPI's worker threads."""
+class PgRow(dict):
+    def __getitem__(self, key):
+        val = super().__getitem__(key) if not isinstance(key, int) else list(self.values())[key]
+        if isinstance(val, (datetime.datetime, datetime.date)):
+            return val.strftime("%Y-%m-%d %H:%M:%S")
+        return val
 
-    def __init__(self, path: str | Path, timeout: float = 30) -> None:
+    def get(self, key, default=None):
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+    def __iter__(self):
+        for val in self.values():
+            if isinstance(val, (datetime.datetime, datetime.date)):
+                yield val.strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                yield val
+
+
+class PgCursorWrapper:
+    def __init__(self, cursor):
+        self.cursor = cursor
+
+    def fetchone(self):
+        row = self.cursor.fetchone()
+        if row is None:
+            return None
+        return PgRow(row)
+
+    def fetchall(self):
+        rows = self.cursor.fetchall()
+        return [PgRow(r) for r in rows]
+
+    @property
+    def rowcount(self):
+        return self.cursor.rowcount
+
+
+class FeatureStore:
+    """Transactional PostgreSQL persistence safe for FastAPI's worker threads."""
+
+    def __init__(self, dsn: str | Path, timeout: float = 30) -> None:
         self._lock = RLock()
-        self.connection = sqlite3.connect(
-            str(path), timeout=timeout, check_same_thread=False
-        )
-        self.connection.row_factory = sqlite3.Row
-        self.connection.execute("PRAGMA journal_mode=WAL")
-        self.connection.execute("PRAGMA synchronous=NORMAL")
-        self.connection.execute("PRAGMA foreign_keys=ON")
-        self.connection.execute(f"PRAGMA busy_timeout={int(timeout * 1000)}")
+        self.connection = psycopg2.connect(str(dsn), connect_timeout=int(timeout))
         self._migrate()
         self._index = None
         self._index_ids: list[tuple[str, str]] = []
 
+    def _execute(self, sql: str, params: tuple = ()) -> PgCursorWrapper:
+        sql = sql.replace("?", "%s")
+        if "INSERT OR IGNORE INTO key_registrations" in sql:
+            sql = sql.replace(
+                "INSERT OR IGNORE INTO key_registrations",
+                "INSERT INTO key_registrations"
+            )
+            if "ON CONFLICT" not in sql:
+                sql += " ON CONFLICT (key_id) DO NOTHING"
+        
+        cursor = self.connection.cursor(cursor_factory=RealDictCursor)
+        cursor.execute(sql, params)
+        return PgCursorWrapper(cursor)
+
     def _migrate(self) -> None:
         with self.connection:
-            self.connection.execute(
+            self._execute(
                 "CREATE TABLE IF NOT EXISTS key_features ("
-                "key_id TEXT NOT NULL, side TEXT NOT NULL, features TEXT NOT NULL, "
+                "key_id VARCHAR(255) NOT NULL, side VARCHAR(50) NOT NULL, features TEXT NOT NULL, "
                 "front_image TEXT, back_image TEXT, normalized_image TEXT, mask_image TEXT, "
                 "metadata TEXT NOT NULL DEFAULT '{}', PRIMARY KEY(key_id, side))"
             )
-            self.connection.execute(
+            self._execute(
                 "CREATE TABLE IF NOT EXISTS key_registrations ("
-                "key_id TEXT PRIMARY KEY, metadata TEXT NOT NULL, "
-                "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, "
-                "updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+                "key_id VARCHAR(255) PRIMARY KEY, metadata TEXT NOT NULL, "
+                "created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+                "updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
             )
             # Preserve catalogs created before first-class registration records.
-            self.connection.execute(
+            self._execute(
                 "INSERT OR IGNORE INTO key_registrations(key_id, metadata) "
                 "SELECT key_id, COALESCE(MAX(metadata), '{}') "
                 "FROM key_features GROUP BY key_id"
@@ -55,11 +104,11 @@ class FeatureStore:
 
     def ping(self) -> bool:
         with self._lock:
-            return self.connection.execute("SELECT 1").fetchone()[0] == 1
+            return self._execute("SELECT 1").fetchone()[0] == 1
 
     def exists(self, key_id: str) -> bool:
         with self._lock:
-            row = self.connection.execute(
+            row = self._execute(
                 "SELECT 1 FROM key_registrations WHERE key_id=?", (key_id,)
             ).fetchone()
             return row is not None
@@ -74,12 +123,12 @@ class FeatureStore:
         with self._lock:
             try:
                 with self.connection:
-                    self.connection.execute(
+                    self._execute(
                         "INSERT INTO key_registrations(key_id, metadata) VALUES (?, ?)",
                         (key_id, encoded_metadata),
                     )
                     for side, features, paths in sides:
-                        self.connection.execute(
+                        self._execute(
                             "INSERT INTO key_features("
                             "key_id, side, features, front_image, back_image, "
                             "normalized_image, mask_image, metadata"
@@ -95,13 +144,13 @@ class FeatureStore:
                                 encoded_metadata,
                             ),
                         )
-            except sqlite3.IntegrityError as exc:
+            except psycopg2.IntegrityError as exc:
                 raise DuplicateKeyError(key_id) from exc
             self._index = None
 
     def all(self) -> list[tuple[str, str, KeyFeatures]]:
         with self._lock:
-            rows = self.connection.execute(
+            rows = self._execute(
                 "SELECT key_id, side, features FROM key_features"
             ).fetchall()
         return [
@@ -111,7 +160,7 @@ class FeatureStore:
 
     def get_registration(self, key_id: str) -> dict[str, Any] | None:
         with self._lock:
-            row = self.connection.execute(
+            row = self._execute(
                 "SELECT key_id, metadata, created_at, updated_at "
                 "FROM key_registrations WHERE key_id=?",
                 (key_id,),
@@ -119,7 +168,7 @@ class FeatureStore:
             if row is None:
                 return None
             sides = [
-                item[0] for item in self.connection.execute(
+                item["side"] for item in self._execute(
                     "SELECT side FROM key_features WHERE key_id=? ORDER BY side",
                     (key_id,),
                 ).fetchall()
@@ -134,7 +183,7 @@ class FeatureStore:
 
     def update_registration(self, key_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
         with self._lock:
-            row = self.connection.execute(
+            row = self._execute(
                 "SELECT metadata FROM key_registrations WHERE key_id=?", (key_id,)
             ).fetchone()
             if row is None:
@@ -145,12 +194,12 @@ class FeatureStore:
             encoded_metadata = json.dumps(metadata, separators=(",", ":"), sort_keys=True)
             
             with self.connection:
-                self.connection.execute(
+                self._execute(
                     "UPDATE key_registrations SET metadata=?, updated_at=CURRENT_TIMESTAMP "
                     "WHERE key_id=?",
                     (encoded_metadata, key_id)
                 )
-                self.connection.execute(
+                self._execute(
                     "UPDATE key_features SET metadata=? WHERE key_id=?",
                     (encoded_metadata, key_id)
                 )
@@ -159,7 +208,7 @@ class FeatureStore:
     def update_cross_refs(self, key_id: str, references: list) -> dict[str, Any] | None:
         """Update only the cross_refs field within the key's metadata."""
         with self._lock:
-            row = self.connection.execute(
+            row = self._execute(
                 "SELECT metadata FROM key_registrations WHERE key_id=?", (key_id,)
             ).fetchone()
             if row is None:
@@ -168,12 +217,12 @@ class FeatureStore:
             metadata["cross_refs"] = references
             encoded_metadata = json.dumps(metadata, separators=(",", ":"), sort_keys=True)
             with self.connection:
-                self.connection.execute(
+                self._execute(
                     "UPDATE key_registrations SET metadata=?, updated_at=CURRENT_TIMESTAMP "
                     "WHERE key_id=?",
                     (encoded_metadata, key_id)
                 )
-                self.connection.execute(
+                self._execute(
                     "UPDATE key_features SET metadata=? WHERE key_id=?",
                     (encoded_metadata, key_id)
                 )
@@ -188,7 +237,7 @@ class FeatureStore:
     ) -> list[str]:
         encoded_features = json.dumps(features.to_dict(), separators=(",", ":"))
         with self._lock:
-            row = self.connection.execute(
+            row = self._execute(
                 "SELECT front_image, back_image, normalized_image, mask_image "
                 "FROM key_features WHERE key_id=? AND side=?",
                 (key_id, side)
@@ -196,7 +245,7 @@ class FeatureStore:
             
             old_paths = [value for value in row if value] if row else []
             
-            reg_row = self.connection.execute(
+            reg_row = self._execute(
                 "SELECT metadata FROM key_registrations WHERE key_id=?", (key_id,)
             ).fetchone()
             
@@ -204,7 +253,7 @@ class FeatureStore:
             
             with self.connection:
                 if row:
-                    self.connection.execute(
+                    self._execute(
                         "UPDATE key_features SET features=?, front_image=?, back_image=?, "
                         "normalized_image=?, mask_image=?, metadata=? "
                         "WHERE key_id=? AND side=?",
@@ -220,7 +269,7 @@ class FeatureStore:
                         )
                     )
                 else:
-                    self.connection.execute(
+                    self._execute(
                         "INSERT INTO key_features("
                         "key_id, side, features, front_image, back_image, "
                         "normalized_image, mask_image, metadata"
@@ -243,7 +292,7 @@ class FeatureStore:
     def list_registrations(self, limit: int, offset: int) -> list[dict[str, Any]]:
         with self._lock:
             ids = [
-                row[0] for row in self.connection.execute(
+                row["key_id"] for row in self._execute(
                     "SELECT key_id FROM key_registrations "
                     "ORDER BY created_at DESC, key_id LIMIT ? OFFSET ?",
                     (limit, offset),
@@ -253,15 +302,15 @@ class FeatureStore:
 
     def delete(self, key_id: str) -> list[str]:
         with self._lock:
-            rows = self.connection.execute(
+            rows = self._execute(
                 "SELECT front_image, back_image, normalized_image, mask_image "
                 "FROM key_features WHERE key_id=?",
                 (key_id,),
             ).fetchall()
             paths = [value for row in rows for value in row if value]
             with self.connection:
-                self.connection.execute("DELETE FROM key_features WHERE key_id=?", (key_id,))
-                cursor = self.connection.execute(
+                self._execute("DELETE FROM key_features WHERE key_id=?", (key_id,))
+                cursor = self._execute(
                     "DELETE FROM key_registrations WHERE key_id=?", (key_id,)
                 )
             if cursor.rowcount:

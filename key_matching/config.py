@@ -4,6 +4,12 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 
 def _bool(name: str, default: bool) -> bool:
     value = os.getenv(name)
@@ -38,6 +44,8 @@ class Settings:
     allowed_origins: tuple[str, ...] = _csv("ALLOWED_ORIGINS", "")
     allowed_hosts: tuple[str, ...] = _csv("ALLOWED_HOSTS", "localhost,127.0.0.1")
     enable_docs: bool = _bool("ENABLE_DOCS", True)
+    database_url: str = os.getenv("DATABASE_URL", "").strip()
+
 
     def validate(self) -> None:
         if self.app_env not in {"development", "test", "production"}:
@@ -63,6 +71,8 @@ class Settings:
                 raise ValueError("ALLOW_SEGMENTATION_FALLBACK must be false in production")
             if not self.api_key or len(self.api_key) < 24:
                 raise ValueError("Production API_KEY must contain at least 24 characters")
+        if not self.database_url:
+            raise ValueError("DATABASE_URL environment variable is required")
 
     @property
     def images_dir(self) -> Path:
@@ -72,9 +82,6 @@ class Settings:
     def artifacts_dir(self) -> Path:
         return self.storage_dir / "artifacts"
 
-    @property
-    def database_path(self) -> Path:
-        return self.storage_dir / "features.sqlite3"
-
 
 settings = Settings()
+

@@ -5,7 +5,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     APP_ENV=production \
     STORAGE_DIR=/app/storage \
     ALLOW_SEGMENTATION_FALLBACK=false \
-    ENABLE_DOCS=false
+    ENABLE_DOCS=true
 
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 \

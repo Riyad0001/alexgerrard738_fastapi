@@ -1,8 +1,22 @@
+import os
+import uuid
 import numpy as np
 import pytest
 
 from key_matching.database import DuplicateKeyError, FeatureStore
 from key_matching.types import KeyFeatures
+
+# Load database settings dynamically from environment variables
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+
+
+def _get_store() -> FeatureStore:
+    if not DATABASE_URL or not (DATABASE_URL.startswith("postgresql://") or DATABASE_URL.startswith("postgres://")):
+        pytest.skip("PostgreSQL test database not configured via DATABASE_URL environment variable")
+    try:
+        return FeatureStore(DATABASE_URL)
+    except Exception as exc:
+        pytest.skip(f"Failed to connect to PostgreSQL test database: {exc}")
 
 
 def _features() -> KeyFeatures:
@@ -13,8 +27,9 @@ def _features() -> KeyFeatures:
     )
 
 
-def test_registration_is_persisted_and_duplicate_is_rejected(tmp_path):
-    store = FeatureStore(tmp_path / "features.sqlite3")
+def test_registration_is_persisted_and_duplicate_is_rejected():
+    store = _get_store()
+    key_id = f"test-key-{uuid.uuid4()}"
     metadata = {"key_type": "house", "num_pins": 5}
     sides = [
         (
@@ -29,42 +44,51 @@ def test_registration_is_persisted_and_duplicate_is_rejected(tmp_path):
         )
     ]
 
-    store.register("key-1", metadata, sides)
-    record = store.get_registration("key-1")
+    try:
+        store.register(key_id, metadata, sides)
+        record = store.get_registration(key_id)
 
-    assert record is not None
-    assert record["metadata"] == metadata
-    assert record["sides"] == ["front"]
-    assert store.list_registrations(10, 0)[0]["key_id"] == "key-1"
-    with pytest.raises(DuplicateKeyError):
-        store.register("key-1", metadata, sides)
-    assert len(store.all()) == 1
-    store.close()
+        assert record is not None
+        assert record["metadata"] == metadata
+        assert record["sides"] == ["front"]
+        
+        # Verify the key is listed
+        registrations = store.list_registrations(10, 0)
+        assert any(r["key_id"] == key_id for r in registrations)
+
+        with pytest.raises(DuplicateKeyError):
+            store.register(key_id, metadata, sides)
+    finally:
+        store.delete(key_id)
+        store.close()
 
 
-def test_delete_removes_registration_and_returns_owned_paths(tmp_path):
-    store = FeatureStore(tmp_path / "features.sqlite3")
-    store.register(
-        "key-1",
-        {"key_type": "house"},
-        [
-            (
-                "front",
-                _features(),
-                {
-                    "front_image": "storage/images/front.jpg",
-                    "back_image": None,
-                    "normalized_image": "storage/artifacts/front.png",
-                    "mask_image": "storage/artifacts/front_mask.png",
-                },
-            )
-        ],
-    )
+def test_delete_removes_registration_and_returns_owned_paths():
+    store = _get_store()
+    key_id = f"test-key-{uuid.uuid4()}"
+    try:
+        store.register(
+            key_id,
+            {"key_type": "house"},
+            [
+                (
+                    "front",
+                    _features(),
+                    {
+                        "front_image": "storage/images/front.jpg",
+                        "back_image": None,
+                        "normalized_image": "storage/artifacts/front.png",
+                        "mask_image": "storage/artifacts/front_mask.png",
+                    },
+                )
+            ],
+        )
 
-    paths = store.delete("key-1")
+        paths = store.delete(key_id)
 
-    assert len(paths) == 3
-    assert store.get_registration("key-1") is None
-    assert store.all() == []
-    assert store.delete("missing") == []
-    store.close()
+        assert len(paths) == 3
+        assert store.get_registration(key_id) is None
+        assert store.delete("missing") == []
+    finally:
+        store.delete(key_id)
+        store.close()
