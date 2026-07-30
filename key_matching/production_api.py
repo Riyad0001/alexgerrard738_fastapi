@@ -104,6 +104,16 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         content={"detail": exc.errors()},
     )
 
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    import sys
+    print(f"HTTP EXCEPTION STATUS {exc.status_code}:", exc.detail, file=sys.stderr, flush=True)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+    )
+
+
 
 if settings.allowed_origins:
     app.add_middleware(
