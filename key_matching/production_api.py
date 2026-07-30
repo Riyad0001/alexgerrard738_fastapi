@@ -84,6 +84,9 @@ async def lifespan(app: FastAPI):
         app.state.store.close()
 
 
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+
 app = FastAPI(
     title="Physical Key Matching Service",
     version="2.1.0",
@@ -91,6 +94,15 @@ app = FastAPI(
     docs_url="/docs" if settings.enable_docs else None,
     redoc_url="/redoc" if settings.enable_docs else None,
 )
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    LOGGER.error("validation_error details=%s", exc.errors())
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors()},
+    )
+
 
 if settings.allowed_origins:
     app.add_middleware(
