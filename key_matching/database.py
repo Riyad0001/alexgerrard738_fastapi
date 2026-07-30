@@ -62,10 +62,19 @@ class FeatureStore:
 
     def __init__(self, dsn: str | Path, timeout: float = 30) -> None:
         self._lock = RLock()
-        self.connection = psycopg2.connect(str(dsn), connect_timeout=int(timeout))
+        self._dsn = str(dsn)
+        self._timeout = timeout
+        self.connection = psycopg2.connect(self._dsn, connect_timeout=int(self._timeout))
         self._migrate()
         self._index = None
         self._index_ids: list[tuple[str, str]] = []
+
+    def _reconnect(self) -> None:
+        try:
+            self.connection.close()
+        except Exception:
+            pass
+        self.connection = psycopg2.connect(self._dsn, connect_timeout=int(self._timeout))
 
     def _execute(self, sql: str, params: tuple = ()) -> PgCursorWrapper:
         sql = sql.replace("?", "%s")
@@ -77,9 +86,19 @@ class FeatureStore:
             if "ON CONFLICT" not in sql:
                 sql += " ON CONFLICT (key_id) DO NOTHING"
         
-        cursor = self.connection.cursor(cursor_factory=RealDictCursor)
-        cursor.execute(sql, params)
-        return PgCursorWrapper(cursor)
+        try:
+            cursor = self.connection.cursor(cursor_factory=RealDictCursor)
+            cursor.execute(sql, params)
+            return PgCursorWrapper(cursor)
+        except (psycopg2.InterfaceError, psycopg2.OperationalError):
+            # Try to reconnect and retry execution once
+            try:
+                self._reconnect()
+                cursor = self.connection.cursor(cursor_factory=RealDictCursor)
+                cursor.execute(sql, params)
+                return PgCursorWrapper(cursor)
+            except Exception:
+                raise
 
     def _migrate(self) -> None:
         with self.connection:
