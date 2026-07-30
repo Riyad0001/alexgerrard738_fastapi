@@ -97,7 +97,8 @@ app = FastAPI(
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    LOGGER.error("validation_error details=%s", exc.errors())
+    import sys
+    print("VALIDATION ERROR DETAILS:", exc.errors(), file=sys.stderr, flush=True)
     return JSONResponse(
         status_code=422,
         content={"detail": exc.errors()},
