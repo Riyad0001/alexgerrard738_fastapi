@@ -24,13 +24,16 @@ class MatchWeights:
 ADVERSE_VIEW_WEIGHTS = MatchWeights(bitting=.30, blade=.10, embedding=.60)
 
 
+# def select_match_weights(bitting: float, embedding: float,
+#                          default: MatchWeights) -> MatchWeights:
+#     """Use appearance support only when geometry still provides agreement."""
+#     if bitting >= .45 and embedding >= .75:
+#         return ADVERSE_VIEW_WEIGHTS
+#     return default
 def select_match_weights(bitting: float, embedding: float,
                          default: MatchWeights) -> MatchWeights:
-    """Use appearance support only when geometry still provides agreement."""
-    if bitting >= .45 and embedding >= .75:
-        return ADVERSE_VIEW_WEIGHTS
+    """Always use the default weights to ensure consistent scoring."""
     return default
-
 
 def bitting_similarity(query: np.ndarray, reference: np.ndarray) -> tuple[float, bool]:
     if query.shape != reference.shape or query.size == 0:

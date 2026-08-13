@@ -67,8 +67,8 @@ class KeySegmenter:
             raise SegmentationError(
                 f"YOLO found no key mask (confidence thresholds tried: {tried})")
         if len(candidates) > 1:
-            raise SegmentationError(
-                f"Expected one key, but YOLO found {len(candidates)} keys")
+            LOGGER.warning("YOLO found %d keys; selecting the largest candidate by area", len(candidates))
+            candidates.sort(key=lambda c: c[0].sum(), reverse=True)
 
         mask, confidence = candidates[0]
         mask = cv2.resize(mask, (image.shape[1], image.shape[0]),
